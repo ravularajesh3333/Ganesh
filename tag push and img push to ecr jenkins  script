@@ -1,0 +1,122 @@
+pipeline {
+    agent any
+
+    environment {
+        AWS_REGION = "us-east-1"
+        ECR_REPO_URL = "600627335208.dkr.ecr.${AWS_REGION}.amazonaws.com/veera"
+        GIT_URL = 'https://github.com/ravularajesh3333/Ganesh.git'
+        AWS_CREDENTIALS_ID = "aws-credentials"
+        GIT_CREDENTIALS_ID = "git-credentials-id"
+        ANSIBLE_HOST_KEY_CHECKING = 'False'
+        INVENTORY_FILE = '/root/inventory'
+        PLAYBOOK_FILE = '/root/main.yaml'
+    }
+
+    parameters {
+        string(name: 'TAG_NAME', defaultValue: "", description: "Tag name to create")
+        string(name: 'BRANCH_NAME', defaultValue: "", description: "Branch name")
+        string(name: 'COMMIT_MESSAGE', defaultValue: "", description: "Commit message")
+        string(name: 'IMAGE_NAME', defaultValue: "", description: "Docker image name")
+    }
+
+    stages {
+
+        stage('Checkout Git Branch') {
+            steps {
+                script {
+                    def branchName = "${BRANCH_NAME}".trim()
+                    if (!branchName) {
+                        error "Branch name is required"
+                    }
+                    echo "Checking out branch: ${branchName}"
+                    git branch: branchName, url: "${GIT_URL}", credentialsId: GIT_CREDENTIALS_ID
+                }
+            }
+        }
+
+        stage('Docker Build') {
+            steps {
+                script {
+                    echo "Building Docker image: ${IMAGE_NAME}"
+                    sh "docker build -t ${IMAGE_NAME} -f /var/lib/jenkins/Dockerfile ."
+                }
+            }
+        }
+
+        stage('Tag Docker Image') {
+            steps {
+                script {
+                    def tagName = "${TAG_NAME}".trim()
+                    if (!tagName) {
+                        tagName = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
+                    }
+                    def imageTag = "${ECR_REPO_URL}:${tagName}"
+                    echo "Tagging Docker image as: ${imageTag}"
+                    sh "docker tag ${IMAGE_NAME} ${imageTag}"
+                }
+            }
+        }
+
+        stage('Push Image to ECR') {
+            steps {
+                script {
+                    withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: AWS_CREDENTIALS_ID]]) {
+                        echo "Logging in to Amazon ECR"
+                        sh "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REPO_URL}"
+                        def tagName = "${TAG_NAME}".trim() ?: sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
+                        def imageTag = "${ECR_REPO_URL}:${tagName}"
+                        echo "Pushing image to ECR: ${imageTag}"
+                        sh "docker push ${imageTag}"
+                    }
+                }
+            }
+        }
+
+        stage('Create and Push Git Tag') {
+            steps {
+                script {
+                    def tagName = "${TAG_NAME}".trim()
+                    if (!tagName) {
+                        tagName = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
+                    }
+                    def tagExists = sh(returnStatus: true, script: "git show-ref --tags ${tagName}")
+
+                    if (tagExists == 0) {
+                        echo "Tag ${tagName} already exists, skipping creation."
+                    } else {
+                        echo "Creating new Git tag: ${tagName}"
+                        sh "git tag -a ${tagName} -m '${COMMIT_MESSAGE}'"
+
+                        withCredentials([usernamePassword(credentialsId: GIT_CREDENTIALS_ID, usernameVariable: 'GIT_USERNAME', passwordVariable: 'GIT_PASSWORD')]) {
+                            sh "git push https://${GIT_USERNAME}:${GIT_PASSWORD}@github.com/ravularajesh3333/Ganesh.git ${tagName}"
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('Execute ansible-playbook') {
+            steps {
+                script {
+                    ansiColor('xterm') {
+                        sh "ansible-playbook -i /root/inventory /root/main.yaml"
+
+                    }
+                }
+            }
+        }
+
+    }
+
+    post {
+        always {
+            cleanWs()
+        }
+        success {
+            echo "Pipeline completed successfully."
+        }
+        failure {
+            echo "Pipeline failed."
+        }
+    }
+}
