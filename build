@@ -1,0 +1,83 @@
+pipeline {
+    agent any
+
+    environment {
+        AWS_REGION = "us-east-1"
+        ECR_REPO_URL = "600627335208.dkr.ecr.${AWS_REGION}.amazonaws.com/veera"
+        GIT_URL = 'https://github.com/ravularajesh3333/Ganesh.git'
+        AWS_CREDENTIALS_ID = "aws-credentials"
+        GIT_CREDENTIALS_ID = "git-credentials-id"
+        ANSIBLE_HOST_KEY_CHECKING = 'False'
+    }
+
+    stages {
+        stage('Checkout Git Tag') {
+            steps {
+                script {
+                    // Checkout the pushed tag
+                    def tagName = "${env.GIT_TAG_NAME}".trim()
+                    if (!tagName) {
+                        error "Tag name is required"
+                    }
+                    echo "Checking out tag: ${tagName}"
+                    git url: "${GIT_URL}", credentialsId: GIT_CREDENTIALS_ID, branch: tagName
+                }
+            }
+        }
+
+        stage('Docker Build') {
+            steps {
+                script {
+                    echo "Building Docker image: ${env.GIT_TAG_NAME}"
+                    sh "docker build -t ${env.GIT_TAG_NAME} -f /var/lib/jenkins/Dockerfile ."
+                }
+            }
+        }
+
+        stage('Tag Docker Image') {
+            steps {
+                script {
+                    def imageTag = "${ECR_REPO_URL}:${env.GIT_TAG_NAME}"
+                    echo "Tagging Docker image as: ${imageTag}"
+                    sh "docker tag ${env.GIT_TAG_NAME} ${imageTag}"
+                }
+            }
+        }
+
+        stage('Push Image to ECR') {
+            steps {
+                script {
+                    withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: AWS_CREDENTIALS_ID]]) {
+                        echo "Logging in to Amazon ECR"
+                        sh "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REPO_URL}"
+                        def imageTag = "${ECR_REPO_URL}:${env.GIT_TAG_NAME}"
+                        echo "Pushing image to ECR: ${imageTag}"
+                        sh "docker push ${imageTag}"
+                    }
+                }
+            }
+        }
+
+        stage('Execute Ansible Playbook') {
+            steps {
+                script {
+                    ansiColor('xterm') {
+                        sh "ansible-playbook -i /var/lib/jenkins/ansible/inventory /var/lib/jenkins/ansible/dummy.yaml --extra-vars 'tag_name=${env.GIT_TAG_NAME}'"
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            cleanWs()
+        }
+        success {
+            echo "Pipeline completed successfully."
+        }
+        failure {
+            echo "Pipeline failed."
+        }
+    }
+}
