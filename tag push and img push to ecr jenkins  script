@@ -120,3 +120,51 @@ pipeline {
         }
     }
 }
+
+
+
+
+ansible file or yaml file (clone docker image from ecr repo and deploy image in cotainer
+
+---
+- name: docker image deploy into server
+  hosts: localhost
+  become: true
+  gather_facts: no
+  vars:
+    aws_region: "us-east-1"
+    ecr_repository_url: "600627335208.dkr.ecr.us-east-1.amazonaws.com/veera"
+    image_tag: "{{ tag_name }}"
+    container_name: "veera-ecr"
+    exposed_port: 80
+
+  tasks:
+    - name: Authenticate Docker with AWS ECR
+      shell: |
+        aws ecr get-login-password --region "{{ aws_region }}" | docker login --username AWS --password-stdin "{{ ecr_repository_url }}"
+
+      register: ecr_login
+
+    - name: Pull the Docker image from ECR
+      docker_image:
+        name: "{{ ecr_repository_url }}"
+        tag: "{{ image_tag }}"
+        source: pull
+      when: ecr_login is succeeded
+
+    - name: Stop and remove the existing Docker container (if it already exists)
+      docker_container:
+        name: "{{ container_name }}"
+        state: absent
+        force_kill: true
+
+    - name: Deploy the Docker container
+      docker_container:
+        name: "{{ container_name }}"
+        image: "{{ ecr_repository_url }}:{{ image_tag }}"
+        state: started
+        ports:
+          - "{{ exposed_port }}:80"
+
+
+
