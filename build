@@ -11,7 +11,7 @@ pipeline {
     }
 
     stages {
-        stage('Checkout Git Tags) {
+        stage('Checkout Git Tags') {
             steps {
                 script {
                     // Checkout the pushed tag
