@@ -6,7 +6,7 @@ pipeline {
         ECR_REPO_URL = "600627335208.dkr.ecr.${AWS_REGION}.amazonaws.com/veera"
         GIT_URL = 'https://github.com/ravularajesh3333/Ganesh.git'
         AWS_CREDENTIALS_ID = "aws-credentials"
-        GIT_CREDENTIALS_ID = "git-credentials-id"
+        GIT_CREDENTIALS_ID = "github-id"
         ANSIBLE_HOST_KEY_CHECKING = 'False'
         
     }
